@@ -96,9 +96,16 @@
   .btn.primary{background:var(--accent); color:var(--accent-ink); border-color:transparent}
   .btn.ghost{background:transparent}
   .btn.soft{background:color-mix(in srgb, var(--accent) 13%, #fff); border-color:var(--accent); color:var(--accent)}
+  .btn.start{background:#fff; border-color:var(--line); color:var(--ink)}
+  .btn.start:active{background:color-mix(in srgb, var(--accent) 14%, #fff); border-color:var(--accent); color:var(--accent)}
   .nrow input[type=color]{width:30px; height:30px; padding:0; border:1.5px solid var(--line); border-radius:8px; background:none; cursor:pointer; flex:0 0 auto; direction:ltr; unicode-bidi:isolate}
   .nrow input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
   .nrow input[type=color]::-webkit-color-swatch{border:none; border-radius:6px}
+  .board.blurred{filter:blur(16px); pointer-events:none}
+  .board{transition:filter .25s ease}
+  #pauseScreen{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:65; opacity:0; pointer-events:none; transition:opacity .2s}
+  #pauseScreen.show{opacity:1}
+  #pauseScreen .btn{pointer-events:auto; font-size:16px; padding:14px 26px}
   .hint-label{text-align:center; color:var(--ink-soft); font-size:12.5px; margin-top:9px; flex:0 0 auto}
 
   .toast{position:fixed; inset-inline:0; bottom:20px; margin-inline:auto; width:max-content; max-width:88vw; background:var(--ink); color:#fff;
@@ -172,12 +179,14 @@
   <div class="controls">
     <button class="btn primary" id="noset">אין סט</button>
     <button class="btn ghost" id="hint">רמז</button>
+    <button class="btn ghost" id="pause">השהה</button>
     <button class="btn ghost" id="reset">משחק חדש</button>
   </div>
   <div class="hint-label" id="hintLabel">כפתור הרמז שומש 0 פעמים</div>
 </div>
 
 <canvas id="confetti"></canvas>
+<div id="pauseScreen"><button class="btn primary" id="resumeBtn">המשך משחק</button></div>
 <div class="toast" id="toast"></div>
 
 <div class="overlay" id="overlay">
@@ -206,7 +215,7 @@
       <div class="setup-hint">שם ומיקום התחלתי של הבאזר (דאבל־קליק על באזר במשחק מאפשר לגרור אותו)</div>
       <div class="names" id="nameInputs"></div>
     </div>
-    <button class="btn soft" id="startBtn" style="width:100%">התחל משחק</button>
+    <button class="btn start" id="startBtn" style="width:100%">התחל משחק</button>
     <button class="btn ghost" id="cancelSetup" style="width:100%; margin-top:8px; display:none">ביטול — חזרה למשחק</button>
   </div>
 </div>
@@ -248,7 +257,7 @@ function cardSVG(card){
 
 let deck=[], board=[], selected=[], score=0, started=false, seconds=0, timer=null, locked=false;
 let mode='single', players=[], activePlayer=null, buzzTO=null, hintUses=0, best=null;
-let moveMode=null; const lastDown={}, buzzT={};
+let moveMode=null; const lastDown={}, buzzT={}; let paused=false, paletteHold=false, hintCards=null, hintPick=null;
 const CARD_AR=112/196, BUZZ_MS=5000;
 
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -259,8 +268,12 @@ function findSet(cards){ for(let i=0;i<cards.length-2;i++)for(let j=i+1;j<cards.
 function findAllSets(cards){ const r=[]; for(let i=0;i<cards.length-2;i++)for(let j=i+1;j<cards.length-1;j++)for(let k=j+1;k<cards.length;k++) if(isSet(cards[i],cards[j],cards[k])) r.push([i,j,k]); return r; }
 
 function fmt(s){ return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
-function startClock(){ if(timer)return; started=true; timer=setInterval(()=>{seconds++; document.getElementById('clock').textContent=fmt(seconds);},1000); }
+function tick(){ if(timer)return; timer=setInterval(()=>{seconds++; document.getElementById('clock').textContent=fmt(seconds);},1000); }
+function startClock(){ started=true; if(!paused) tick(); }
 function stopClock(){ clearInterval(timer); timer=null; }
+function pauseGame(){ if(!started||paused) return; paused=true; stopClock(); document.getElementById('board').classList.add('blurred'); document.getElementById('pauseScreen').classList.add('show'); const pb=document.getElementById('pause'); if(pb) pb.textContent='המשך'; }
+function resumeGame(){ if(!paused) return; paused=false; document.getElementById('board').classList.remove('blurred'); document.getElementById('pauseScreen').classList.remove('show'); const pb=document.getElementById('pause'); if(pb) pb.textContent='השהה'; tick(); }
+function togglePause(){ if(!started) return; paused?resumeGame():pauseGame(); }
 
 function layoutBoard(){
   const b=document.getElementById('board');
@@ -338,7 +351,7 @@ function startDrag(i,el,ev,keepIfNoMove){
 }
 
 function pick(i){
-  if(locked) return;
+  if(locked||paused) return;
   if(mode==='multi' && activePlayer===null){ toast('לחצו על הבאזר שלכם כדי לבחור','warn'); return; }
   if(!started) startClock();
   const at=selected.indexOf(i);
@@ -380,7 +393,7 @@ function evaluate(){
 }
 
 function buzz(p){
-  if(mode!=='multi'||locked||activePlayer!==null) return;
+  if(mode!=='multi'||locked||paused||activePlayer!==null) return;
   if(players[p].lockUntil && performance.now()<players[p].lockUntil) return;
   if(!started) startClock();
   activePlayer=p; selected=[]; renderBuzzers();
@@ -403,12 +416,19 @@ function onNoSet(){
 }
 /* רמז: מדגיש קלף אקראי מתוך סט אקראי (לא תמיד הראשון מימין) */
 function hint(){
-  if(locked) return;
+  if(locked||paused) return;
   const sets=findAllSets(board);
   if(!sets.length){ toast('אין סט על הלוח — לחצו "אין סט"','warn'); return; }
   hintUses++; updateHints();
-  const set=sets[Math.random()*sets.length|0];
-  const idx=set[Math.random()*set.length|0];
+  let idx;
+  if(hintCards && hintPick && hintCards.every(c=>board.includes(c)) && board.includes(hintPick)){
+    idx=board.indexOf(hintPick);                 // אותו קלף כל עוד הסט קיים
+  } else {
+    const set=sets[Math.random()*sets.length|0];
+    hintCards=set.map(i=>board[i]);
+    hintPick=hintCards[Math.random()*hintCards.length|0];
+    idx=board.indexOf(hintPick);
+  }
   const el=document.querySelectorAll('.card')[idx];
   if(el){ el.classList.add('hint'); setTimeout(()=>el.classList.remove('hint'),1200); }
 }
@@ -470,13 +490,21 @@ function buildPaletteBar(){
   PALETTES.forEach((p,i)=>{
     const chip=document.createElement('button'); chip.className='pchip'+(i===paletteIndex?' active':'');
     chip.innerHTML=`<span class="dots">${dotsHTML(p)}</span>${p.name}`;
-    chip.onclick=()=>{ paletteIndex=i; document.querySelectorAll('.pchip').forEach(c=>c.classList.remove('active')); chip.classList.add('active'); applyPalette(); render(); updateCurDots(); document.getElementById('paletteWrap').classList.remove('open'); };
+    chip.onclick=()=>{ paletteIndex=i; document.querySelectorAll('.pchip').forEach(c=>c.classList.remove('active')); chip.classList.add('active'); applyPalette(); render(); updateCurDots(); closePalette(); };
     menu.appendChild(chip);
   });
   updateCurDots();
   const wrap=document.getElementById('paletteWrap'), toggle=document.getElementById('palToggle');
-  toggle.onclick=(e)=>{ e.stopPropagation(); wrap.classList.toggle('open'); };
-  document.addEventListener('click',(e)=>{ if(!wrap.contains(e.target)) wrap.classList.remove('open'); });
+  toggle.onclick=(e)=>{ e.stopPropagation(); if(wrap.classList.contains('open')) closePalette(); else openPalette(); };
+  document.addEventListener('click',(e)=>{ if(!wrap.contains(e.target)) closePalette(); });
+}
+function openPalette(){
+  document.getElementById('paletteWrap').classList.add('open');
+  if(started && !paused){ document.getElementById('board').classList.add('blurred'); stopClock(); paletteHold=true; }
+}
+function closePalette(){
+  document.getElementById('paletteWrap').classList.remove('open');
+  if(paletteHold){ paletteHold=false; if(!paused){ document.getElementById('board').classList.remove('blurred'); tick(); } }
 }
 
 let setupMode='single', setupCount=2, setupNames=[], setupPositions=[], setupColors=[];
@@ -518,7 +546,10 @@ function startFromSetup(){
   newGame();
 }
 function newGame(){
-  stopClock(); clearBuzz(); moveMode=null;
+  stopClock(); clearBuzz(); moveMode=null; paused=false; paletteHold=false; hintCards=null; hintPick=null;
+  document.getElementById('board').classList.remove('blurred');
+  document.getElementById('pauseScreen').classList.remove('show');
+  const pb=document.getElementById('pause'); if(pb) pb.textContent='השהה';
   deck=buildDeck(); board=[]; selected=[]; score=0; seconds=0; started=false; locked=false; activePlayer=null; hintUses=0;
   if(mode==='multi') players.forEach(p=>{ p.score=0; p.lockUntil=0; });
   for(let n=0;n<12;n++) board.push(deck.pop());
@@ -532,6 +563,8 @@ function toast(msg,type=''){ const t=document.getElementById('toast'); t.textCon
 
 document.getElementById('noset').onclick=onNoSet;
 document.getElementById('hint').onclick=hint;
+document.getElementById('pause').onclick=togglePause;
+document.getElementById('resumeBtn').onclick=resumeGame;
 document.getElementById('reset').onclick=()=>showSetup(true);
 document.getElementById('mAgain').onclick=()=>showSetup(false);
 document.getElementById('cancelSetup').onclick=cancelSetup;
