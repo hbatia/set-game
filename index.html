@@ -95,6 +95,7 @@
   .btn:active{transform:translateY(0)}
   .btn.primary{background:var(--accent); color:var(--accent-ink); border-color:transparent}
   .btn.ghost{background:transparent}
+  .btn.ghost:active{background:color-mix(in srgb, var(--accent) 14%, #fff); border-color:var(--accent); color:var(--accent)}
   .btn.soft{background:color-mix(in srgb, var(--accent) 13%, #fff); border-color:var(--accent); color:var(--accent)}
   .btn.start{background:#fff; border-color:var(--line); color:var(--ink)}
   .btn.start:active{background:color-mix(in srgb, var(--accent) 14%, #fff); border-color:var(--accent); color:var(--accent)}
@@ -177,7 +178,7 @@
   <div class="board" id="board"></div>
 
   <div class="controls">
-    <button class="btn primary" id="noset">אין סט</button>
+    <button class="btn ghost" id="noset">אין סט</button>
     <button class="btn ghost" id="hint">רמז</button>
     <button class="btn ghost" id="pause">השהה</button>
     <button class="btn ghost" id="reset">משחק חדש</button>
